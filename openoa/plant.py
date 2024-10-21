@@ -443,8 +443,8 @@ class PlantData:
         default={"missing": {}, "dtype": {}, "frequency": {}, "attributes": []}, init=False
     )
     eia: dict = field(default={}, init=False)
-    asset_distance_matrix: pd.DataFrame = field(init=False)
-    asset_direction_matrix: pd.DataFrame = field(init=False)
+    asset_distance_matrix: pd.DataFrame = field(init=False, default=pd.DataFrame([]))
+    asset_direction_matrix: pd.DataFrame = field(init=False, default=pd.DataFrame([]))
 
     def __attrs_post_init__(self):
         """Post-initialization hook."""
