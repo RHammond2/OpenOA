@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import random
 import datetime
 from copy import deepcopy
@@ -10,8 +11,8 @@ import pandas as pd
 import numpy.typing as npt
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 from attrs import field, define
+from tqdm.auto import tqdm, trange
 from sklearn.metrics import r2_score, mean_squared_error
 from matplotlib.markers import MarkerStyle
 from sklearn.linear_model import LinearRegression
@@ -28,6 +29,10 @@ from openoa.schema.metadata import convert_frequency
 from openoa.utils.machine_learning_setup import MachineLearningSetup
 from openoa.analysis._analysis_validators import validate_reanalysis_selections
 
+
+# if sys.stderr.isatty():
+# else:
+#     from tqdm.notebook import tqdm, trange
 
 logger = logging.getLogger(__name__)
 
@@ -285,6 +290,7 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         time_resolution: str = None,
         end_date_lt: str | pd.Timestamp | None = None,
         ml_setup_kwargs: dict = None,
+        progress_bar: bool = True,
     ) -> None:
         """
         Process all appropriate data and run the MonteCarlo AEP analysis.
@@ -324,6 +330,8 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
                 points. Defaults to "lin".
             ml_setup_kwargs(:obj:`kwargs`): Keyword arguments to
                 :py:class:`openoa.utils.machine_learning_setup.MachineLearningSetup` class. Defaults to {}.
+            progress_bar(:obj:`bool`): Flag to use a progress bar for the iterations in the AEP
+                calculation.
 
         Returns:
             None
@@ -382,7 +390,7 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         # Start the computation
         self.calculate_long_term_losses()
         self.setup_monte_carlo_inputs()
-        self.results = self.run_AEP_monte_carlo()
+        self.results = self.run_AEP_monte_carlo(progress_bar=progress_bar)
 
         # Log the completion of the run
         logger.info("Run completed")
@@ -749,6 +757,10 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
             & (~df["nan_flag"]),
             :,
         ]
+        if df_sub.size == 0:
+            raise ValueError(
+                "The `uncertainty_loss_max` is too low for the data or there are too many NaN values."
+            )
 
         # Set maximum range for using bin-filter, convert from MW to GWh
         plant_capac = self.plant.metadata.capacity / 1000.0 * self.resample_hours
@@ -959,9 +971,13 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
             return self.opt_model[(self._run.reanalysis_product)]
 
     @logged_method_call
-    def run_AEP_monte_carlo(self):
+    def run_AEP_monte_carlo(self, progress_bar: bool = True):
         """
         Loop through OA process a number of times and return array of AEP results each time
+
+        Args:
+            progress_bar(:obj:`bool`): Flag to use a progress bar for the iterations in the AEP
+                calculation.
 
         Returns:
             :obj:`numpy.ndarray` Array of AEP, long-term avail, long-term curtailment calculations
@@ -991,7 +1007,8 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         iav = np.empty(num_sim)
 
         # Loop through number of simulations, run regression each time, store AEP results
-        for n in tqdm(np.arange(num_sim)):
+        _range = trange(num_sim) if progress_bar else np.arange(num_sim)
+        for n in _range:
             self._run = self.mc_inputs.loc[n]
 
             # Run regression
