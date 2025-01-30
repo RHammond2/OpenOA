@@ -120,6 +120,9 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
             points. Defaults to "lin".
         ml_setup_kwargs(:obj:`kwargs`): Keyword arguments to
             :py:class:`openoa.utils.machine_learning_setup.MachineLearningSetup` class. Defaults to {}.
+        n_jobs(:obj:`int` | :obj:`None`): The number of jobs to use for the computation in the scikit-learn model.
+            This will only provide speedup in case of sufficiently large problems.``None`` means 1
+            unless in a :obj:`joblib.parallel_backend` context. ``-1`` means using all processors.
     """
 
     plant: PlantData = field(converter=deepcopy, validator=attrs.validators.instance_of(PlantData))
@@ -174,6 +177,10 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         default="lin", converter=str, validator=attrs.validators.in_(("lin", "gbm", "etr", "gam"))
     )
     ml_setup_kwargs: dict = field(default={}, converter=dict)
+    n_jobs: int | None = field(
+        default=None, validator=attrs.validators.instance_of((int, type(None)))
+    )
+    apply_iav: bool = field(default=True, validator=attrs.validators.instance_of(bool))
 
     # Internally created attributes need to be given a type before usage
     resample_freq: str = field(init=False)
@@ -929,7 +936,9 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         # Run regression. Note, the last column of reg_data is the target variable for the regression
         # Linear regression
         if self.reg_model == "lin":
-            reg = LinearRegression().fit(np.array(reg_data[:, 0:-1]), reg_data[:, -1])
+            reg = LinearRegression(n_jobs=self.n_jobs).fit(
+                np.array(reg_data[:, 0:-1]), reg_data[:, -1]
+            )
             predicted_y = reg.predict(np.array(reg_data[:, 0:-1]))
 
             self._mc_slope[n, :] = reg.coef_
@@ -958,6 +967,7 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
                     report=False,
                     cv=KFold(n_splits=5),
                     verbose=verbosity,
+                    n_jobs=self.n_jobs,
                 )
                 # Store optimized hyperparameters for each reanalysis product
                 self.opt_model[(self._run.reanalysis_product)] = ml.opt_model
@@ -1092,9 +1102,10 @@ class MonteCarloAEP(FromDictMixin, ResetValuesMixin):
         iav_avg = iav.mean()
 
         # Apply IAV to AEP from single MC iterations
-        iav_nsim = np.random.normal(1, iav_avg, self.num_sim)
-        aep_GWh = aep_GWh * iav_nsim
-        lt_por_ratio = lt_por_ratio * iav_nsim
+        if self.apply_iav:
+            iav_nsim = np.random.normal(1, iav_avg, self.num_sim)
+            aep_GWh = aep_GWh * iav_nsim
+            lt_por_ratio = lt_por_ratio * iav_nsim
 
         # Return final output
         sim_results = pd.DataFrame(
@@ -1551,6 +1562,8 @@ __defaults_reg_model = MonteCarloAEP.__attrs_attrs__.reg_model.default
 __defaults_ml_setup_kwargs = MonteCarloAEP.__attrs_attrs__.ml_setup_kwargs.default
 __defaults_reg_temperature = MonteCarloAEP.__attrs_attrs__.reg_temperature.default
 __defaults_reg_wind_direction = MonteCarloAEP.__attrs_attrs__.reg_wind_direction.default
+__defaults_n_jobs = MonteCarloAEP.__attrs_attrs__.n_jobs.default
+__defaults_apply_iav = MonteCarloAEP.__attrs_attrs__.apply_iav.default
 
 
 def create_MonteCarloAEP(
@@ -1569,6 +1582,8 @@ def create_MonteCarloAEP(
     ml_setup_kwargs: dict = __defaults_ml_setup_kwargs,
     reg_temperature: bool = __defaults_reg_temperature,
     reg_wind_direction: bool = __defaults_reg_wind_direction,
+    n_jobs: int | None = __defaults_n_jobs,
+    apply_iav: bool = __defaults_apply_iav,
 ) -> MonteCarloAEP:
     return MonteCarloAEP(
         plant=project,
@@ -1586,6 +1601,8 @@ def create_MonteCarloAEP(
         ml_setup_kwargs=ml_setup_kwargs,
         reg_temperature=reg_temperature,
         reg_wind_direction=reg_wind_direction,
+        n_jobs=n_jobs,
+        apply_iav=apply_iav,
     )
 
 

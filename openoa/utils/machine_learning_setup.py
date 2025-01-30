@@ -107,6 +107,9 @@ class MachineLearningSetup:
     random_search: Any = field(init=False)
     opt_hyp: Any = field(init=False)
     opt_model: Any = field(init=False)
+    n_jobs: int | None = field(
+        default=None,
+    )
 
     def __attrs_post_init__(self):
         """
@@ -167,6 +170,7 @@ class MachineLearningSetup:
         n_iter_search: int = 20,
         report: bool = True,
         verbose: int = 0,
+        n_jobs: int | None = None,
     ) -> None:
         """
         Optimize hyperparameters through cross-validation
@@ -186,6 +190,9 @@ class MachineLearningSetup:
                 - >1 : the computation time for each fold and parameter candidate is displayed;
                 - >2 : the score is also displayed;
                 - >3 : the fold and candidate parameter indexes are also displayed together with the starting time of the computation.
+            n_jobs(:obj:`int`): The number of jobs to use for the computation in the scikit-learn model.
+                This will only provide speedup in case of sufficiently large problems.``None`` means 1
+                unless in a :obj:`joblib.parallel_backend` context. ``-1`` means using all processors.
 
         Returns:
             (none)
@@ -199,6 +206,7 @@ class MachineLearningSetup:
             scoring=self.my_scorer,
             verbose=0,
             return_train_score=True,
+            n_jobs=self.n_jobs,
         )
         # Fit the model to each combination of hyperparmeters
         self.random_search.fit(X, y)
