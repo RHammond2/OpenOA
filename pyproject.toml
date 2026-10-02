@@ -70,10 +70,8 @@ changelog = "https://github.com/NREL/OpenOA/blob/main/CHANGELOG.md"
 [project.optional-dependencies]
 develop = [
   "pre-commit",
-  "black",
+  "ruff",
   "isort",
-  "flake8",
-  "flake8-docstrings",
   "pytest>=9",
   "pytest-cov>=2.8.1",
 ]
@@ -139,35 +137,55 @@ filterwarnings = [
   "ignore::DeprecationWarning:pygam.*:",
 ]
 
-[tool.black]
-# https://github.com/psf/black
+[tool.ruff]
+src = ["openoa", "test"]
 line-length = 100
-target-version = ["py310", "py311", "py312", "py313"]
-include = '\.pyi?$'
-exclude = '''
-# A regex preceded with ^/ will apply only to files and directories
-# in the root of the project.
-^/(
-  (
-      \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | _build
-    | buck-out
-    | build
-    | dist
-  )/
-  | foo.py           # also separately exclude a file named foo.py in
-                     # the root of the project
-)
-'''
+target-version = "py311"
+fix = true
+
+[tool.ruff.lint]
+# See https://github.com/charliermarsh/ruff#supported-rules
+# for rules included and matching to prefix.
+select = ["F", "E", "W", "C4", "D", "UP", "NPY", "PTH", "RUF", "FBT", "B", "PIE", "T20", "SIM", ]
+
+# D205: not using summary lines and descriptions, just descriptions
+# D401: don't believe enough in imperative mode to make all the changes currently
+ignore = ["D205", "D401"]
+
+# Allow autofix for all enabled rules (when `--fix`) is provided.
+fixable = ["F", "E", "W", "C4", "D", "UP", "NPY", "PTH", "RUF", "FBT", "B", "PIE", "T20", "SIM", ]
+unfixable = []
+
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "examples/archival/*",
+    "examples/*.ipynb"
+]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [tool.isort]
 # https://github.com/PyCQA/isort
-profile = "black"
 py_version = 310
 src_paths = ["isort", "test"]
 line_length = "100"
