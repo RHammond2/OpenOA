@@ -164,7 +164,7 @@ class TestPlantDatPartial(unittest.TestCase):
 
     def setUp(self):
         """Create the plantdata object."""
-        with (example_data_path_str + "/../plant_meta.yml").open() as f:
+        with Path(example_data_path_str + "/../plant_meta.yml").open() as f:
             meta_partial = yaml.safe_load(f)
         meta_partial.pop("reanalysis")
         self.plant = PlantData(
@@ -183,7 +183,7 @@ class TestPlantDatPartial(unittest.TestCase):
         """Tests that when there are missing products in the reanalysis metadata, that
         a KeyError is raised early.
         """
-        with (example_data_path_str + "/../plant_meta.yml").open() as f:
+        with Path(example_data_path_str + "/../plant_meta.yml").open() as f:
             metadata = yaml.safe_load(f)
 
         # Raised when all missing
