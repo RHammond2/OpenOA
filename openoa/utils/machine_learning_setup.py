@@ -52,21 +52,22 @@ import numpy as np
 import pandas as pd
 import sklearn
 from attrs import field, define
-from pygam import GAM
 from sklearn.metrics import r2_score, make_scorer
 from sklearn.ensemble import ExtraTreesRegressor, GradientBoostingRegressor
+from sklearn.linear_model import TweedieRegressor
 from sklearn.model_selection import KFold, RandomizedSearchCV
 
 
 def _algorithm_map(
     abbreviation: str,
-) -> GAM | ExtraTreesRegressor | GradientBoostingRegressor:
+) -> TweedieRegressor | ExtraTreesRegressor | GradientBoostingRegressor:
     """Maps the input string abbreviation to an instantiated ML model.
 
     Args:
         abbreviation (str): One of "etr", "gbm", or "gam", which maps to one of
             :py:class:`sklearn.ensemble.ExtraTreesRegressor`,
-            :py:class:`sklearn.ensemble.GradientBoostingRegressor`, or :py:class:`pygam.GAM`,
+            :py:class:`sklearn.ensemble.GradientBoostingRegressor`, or
+            :py:class:`sklearn.linear.TweedieRegressor`,
             respectively.
 
     Returns:
@@ -78,7 +79,7 @@ def _algorithm_map(
     if abbreviation == "gbm":
         return GradientBoostingRegressor()
     if abbreviation == "gam":
-        return GAM()
+        return TweedieRegressor()
 
     valid = ("etr", "gbm", "gam")
     raise NotImplementedError(
@@ -120,8 +121,12 @@ class MachineLearningSetup:
                 "min_samples_leaf": np.arange(1, 11),
                 "n_estimators": np.arange(10, 801, 40),
             }
-        elif isinstance(self.algorithm, GAM):
-            self.hyper_range = {"n_splines": np.arange(5, 40)}
+        elif isinstance(self.algorithm, TweedieRegressor):
+            self.hyper_range = {
+                "power": [0, 1, 1.1, 1.25, 1.5, 1.75, 1.9, 2, 3],
+                "alpha": [10 ** (i - 2) for i in range(6)],
+                "max_iter": [1000],
+            }
 
         self.hyper_range.update(self.params)
 

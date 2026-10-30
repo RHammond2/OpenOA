@@ -1,6 +1,4 @@
 import copy
-import random
-import unittest
 
 import numpy as np
 import pandas as pd
@@ -10,375 +8,42 @@ from numpy import testing as npt
 from openoa.analysis import MonteCarloAEP
 
 
-from test.conftest import project_ENGIE, example_data_path_str  # isort: skip
+from test.conftest import reset_prng  # isort: skip
 
 
-def reset_prng():
-    np.random.seed(42)
-    random.seed(42)
+@pytest.fixture(scope="module")
+def aep_project(project):
+    """Load and prepare the ENGIE plant data for each regression test."""
+    project = project(None)
+    return project
 
 
-class TestLongTermMonteCarloAEP(unittest.TestCase):
-    def setUp(self):
-        """Python Unittest setUp method.
-        Load data from disk into PlantData objects and prepare the data for testing the AEP method.
-        """
-        reset_prng()
+@pytest.fixture(scope="module")
+def reanalysis_aep_project(aep_project):
+    """Load and prepare the ENGIE plant data for each regression test."""
+    project = copy.deepcopy(aep_project)
+    project.reanalysis["merra2"] = project.reanalysis["merra2"].loc[:"2019-04-15 12:30"]
+    project.reanalysis["era5"] = project.reanalysis["era5"].loc["1999-01-15 12:00":]
+    return project
 
-        # Set up data to use for testing (ENGIE example plant)
-        self.project = project_ENGIE.prepare(example_data_path_str, use_cleansed=False)
 
-        # Set up a new project with modified reanalysis start and end dates
-        self.project_rean = copy.deepcopy(self.project)
+def test_monthly_inputs(subtests, aep_project):
+    """Test inputs to the regression model, at monthly time resolution."""
+    reset_prng()
 
-        self.project_rean.reanalysis["merra2"] = self.project_rean.reanalysis["merra2"].loc[
-            :"2019-04-15 12:30"
-        ]
-        self.project_rean.reanalysis["era5"] = self.project_rean.reanalysis["era5"].loc[
-            "1999-01-15 12:00":
-        ]
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="MS",
+        reg_temperature=True,
+        reg_wind_direction=True,
+    )
+    df = analysis.aggregate
+    df_rean = analysis._reanalysis_aggregate
 
-    def test_monthly_inputs(self):
-        """Test inputs to the regression model, at monthly time resolution."""
-        reset_prng()
-
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="MS",
-            reg_temperature=True,
-            reg_wind_direction=True,
-        )
-        df = self.analysis.aggregate
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # Check the pre-processing functions
-        self.check_process_revenue_meter_energy_monthly(df)
-        self.check_process_loss_estimates_monthly(df)
-        self.check_process_reanalysis_data_monthly(df, df_rean)
-
-    def test_reanalysis_aggregate_monthly(self):
-        """Test reanalysis start and end dates depending on time resolution and end date argument."""
-        reset_prng()
-        # ____________________________________________________________________
-        # Test default aggregate reanalysis values and date range, at monthly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean, reanalysis_products=["merra2", "era5"], time_resolution="MS"
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-02-01"),
-            pd.to_datetime("2019-03-01"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [7.584891, 8.679547], "era5": [7.241081, 8.188632]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-        # ____________________________________________________________________
-        # Check for invalid user-defined end dates
-        # Date range doesn't include full 20 years
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="MS",
-                end_date_lt="2018-12-15 12:00",
-            )
-
-        # End date out of bounds, monthly
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="MS",
-                end_date_lt="2019-04-15 13:00",
-            )
-
-        # ____________________________________________________________________
-        # Test aggregate reanalysis values and date range with user-defined end date, at monthly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="MS",
-            end_date_lt="2019-02-10 12:00",
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-02-01"),
-            pd.to_datetime("2019-02-01"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [7.584891, 6.529796], "era5": [7.241081, 6.644804]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-    def test_reanalysis_aggregate_daily(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test default aggregate reanalysis values and date range, at daily time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean, reanalysis_products=["merra2", "era5"], time_resolution="D"
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-01-16"),
-            pd.to_datetime("2019-03-31"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [12.868168, 5.152958], "era5": [12.461761, 5.238968]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-        # ____________________________________________________________________
-        # Check for invalid user-defined end dates
-        # Date range doesn't include full 20 years
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="D",
-                end_date_lt="2019-01-14 23:00",
-            )
-
-        # End date out of bounds, daily
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="D",
-                end_date_lt="2019-04-15 13:00",
-            )
-
-        # ____________________________________________________________________
-        # Test aggregate reanalysis values and date range with user-defined end date, at daily time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="D",
-            end_date_lt="2019-02-10 12:00",
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-01-16"),
-            pd.to_datetime("2019-02-10"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [12.868168, 14.571084], "era5": [12.461761, 14.045798]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-    def test_reanalysis_aggregate_hourly(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test default aggregate reanalysis values and date range, at hourly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean, reanalysis_products=["merra2", "era5"], time_resolution="h"
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-01-15 12:00"),
-            pd.to_datetime("2019-03-31 23:00"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [10.509840, 9.096710], "era5": [9.202639, 9.486806]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-        # ____________________________________________________________________
-        # Check for invalid user-defined end dates
-        # Date range doesn't include full 20 years
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="h",
-                end_date_lt="2019-01-15 10:00",
-            )
-
-        # End date out of bounds, hourly
-        with pytest.raises(ValueError):
-            MonteCarloAEP(
-                self.project_rean,
-                reanalysis_products=["merra2", "era5"],
-                time_resolution="h",
-                end_date_lt="2019-04-15 13:00",
-            )
-
-        # ____________________________________________________________________
-        # Test aggregate reanalysis values and date range with user-defined end date, at hourly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project_rean,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="h",
-            end_date_lt="2019-02-10 12:00",
-        )
-        df_rean = self.analysis._reanalysis_aggregate
-
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-01-15 12:00"),
-            pd.to_datetime("2019-02-10 12:00"),
-        )
-
-        # Check wind speed values at start and end dates
-        expected = {"merra2": [10.509840, 16.985526], "era5": [9.202639, 15.608469]}
-        computed = {
-            key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy()
-            for key in expected
-        }
-
-        for key in expected:
-            npt.assert_array_almost_equal(computed[key], expected[key])
-
-    def test_monthly_lin(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test linear regression model, at monthly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="MS",
-            reg_model="lin",
-            reg_temperature=False,
-            reg_wind_direction=False,
-        )
-        # Run Monte Carlo AEP analysis, confirm the results are consistent
-        self.analysis.run(num_sim=10)
-        sim_results = self.analysis.results
-        self.check_simulation_results_lin_monthly(sim_results)
-
-    # Test inputs to the regression model, at daily time resolution
-    def test_daily_inputs(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test inputs to the regression model, at monthly time resolution
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="D",
-            reg_temperature=True,
-            reg_wind_direction=True,
-        )
-        df = self.analysis.aggregate
-
-        # Check the pre-processing functions
-        self.check_process_revenue_meter_energy_daily(df)
-        self.check_process_loss_estimates_daily(df)
-        self.check_process_reanalysis_data_daily(df)
-
-    def test_daily_gam(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test GAM regression model (can be used at daily time resolution only)
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="D",
-            reg_model="gam",
-            reg_temperature=True,
-            reg_wind_direction=True,
-        )
-        # Run Monte Carlo AEP analysis, confirm the results are consistent
-        self.analysis.run(num_sim=5)
-        sim_results = self.analysis.results
-        self.check_simulation_results_gam_daily(sim_results)
-
-    @pytest.mark.xfail(reason="Fails intermittently depending, mostly on MacOS.")
-    def test_daily_gbm(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test GBM regression model (can be used at daily time resolution only)
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["era5"],
-            time_resolution="D",
-            reg_model="gbm",
-            reg_temperature=True,
-            reg_wind_direction=False,
-        )
-        # Run Monte Carlo AEP analysis, confirm the results are consistent
-        self.analysis.run(num_sim=5)
-        sim_results = self.analysis.results
-        self.check_simulation_results_gbm_daily(sim_results)
-
-    def test_daily_etr(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test ETR regression model (can be used at daily time resolution only)
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2"],
-            time_resolution="D",
-            reg_model="etr",
-            reg_temperature=False,
-            reg_wind_direction=False,
-        )
-        # Run Monte Carlo AEP analysis, confirm the results are consistent
-        self.analysis.run(num_sim=5)
-        sim_results = self.analysis.results
-        self.check_simulation_results_etr_daily(sim_results)
-
-    def test_daily_gam_outliers(self):
-        reset_prng()
-        # ____________________________________________________________________
-        # Test GAM regression model (can be used at daily time resolution only)
-        self.analysis = MonteCarloAEP(
-            self.project,
-            reanalysis_products=["merra2", "era5"],
-            time_resolution="D",
-            outlier_detection=True,
-            reg_model="gam",
-            reg_temperature=True,
-            reg_wind_direction=True,
-        )
-        # Run Monte Carlo AEP analysis, confirm the results are consistent
-        self.analysis.run(num_sim=5)
-        sim_results = self.analysis.results
-        self.check_simulation_results_gam_daily_outliers(sim_results)
-
-    def check_process_revenue_meter_energy_monthly(self, df):
-        # Energy Nan flags are all zero
+    # Check the pre-processing functions
+    # Energy Nan flags are all zero
+    with subtests.test("Check pre-processing results"):
         npt.assert_array_equal(df["energy_nan_perc"].values, np.repeat(0.0, df.shape[0]))
 
         # Expected number of days per month are equal to number of actual days
@@ -391,7 +56,7 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
         ]
         npt.assert_array_almost_equal(actual_gwh, expected_gwh)
 
-    def check_process_loss_estimates_monthly(self, df):
+    with subtests.test("Check availability and curtailment"):
         # Availablity, curtailment nan fields both 0, NaN flag is all False
         npt.assert_array_equal(df["avail_nan_perc"].values, np.repeat(0.0, df.shape[0]))
         npt.assert_array_equal(df["curt_nan_perc"].values, np.repeat(0.0, df.shape[0]))
@@ -410,7 +75,13 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
         npt.assert_array_almost_equal(df.loc[date_ind, "availability_pct"], expected_avail_pct)
         npt.assert_array_almost_equal(df.loc[date_ind, "curtailment_pct"], expected_curt_pct)
 
-    def check_process_reanalysis_data_monthly(self, df, df_rean):
+    with subtests.test("Check reanalysis data"):
+        # check that date range is truncated correctly
+        assert (df_rean.index[0], df_rean.index[-1]) == (
+            pd.to_datetime("1999-01-01 00:00:00"),
+            pd.to_datetime("2019-04-01 00:00:00"),
+        )
+
         expected = {
             "merra2": [5.42523278, 6.86883337, 5.02690892],
             "era5": [5.20508049, 6.71586744, 5.23824611],
@@ -419,20 +90,270 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
             "merra2_WMETR_EnvTmp": [289.87128364, 275.26493716, 281.72562887],
             "era5_WMETR_EnvTmp": [290.82110632, 276.62490053, 282.71629935],
         }
-
         date_ind = pd.to_datetime(["2014-06-01", "2014-12-01", "2015-10-01"])
         computed = {key: df.loc[date_ind, key].to_numpy() for key in expected}
-
         for key in expected:
             npt.assert_array_almost_equal(computed[key], expected[key])
 
-        # check that date range is truncated correctly
-        assert (df_rean.index[0], df_rean.index[-1]) == (
-            pd.to_datetime("1999-01-01 00:00:00"),
-            pd.to_datetime("2019-04-01 00:00:00"),
+
+def test_reanalysis_aggregate_monthly(reanalysis_aep_project):
+    """Test reanalysis start and end dates depending on time resolution and end date argument."""
+    reset_prng()
+    # ____________________________________________________________________
+    # Test default aggregate reanalysis values and date range, at monthly time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project, reanalysis_products=["merra2", "era5"], time_resolution="MS"
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-02-01"),
+        pd.to_datetime("2019-03-01"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [7.584891, 8.679547], "era5": [7.241081, 8.188632]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+    # ____________________________________________________________________
+    # Check for invalid user-defined end dates
+    # Date range doesn't include full 20 years
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="MS",
+            end_date_lt="2018-12-15 12:00",
         )
 
-    def check_process_revenue_meter_energy_daily(self, df):
+    # End date out of bounds, monthly
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="MS",
+            end_date_lt="2019-04-15 13:00",
+        )
+
+    # ____________________________________________________________________
+    # Test aggregate reanalysis values and date range with user-defined end date, at monthly time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="MS",
+        end_date_lt="2019-02-10 12:00",
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-02-01"),
+        pd.to_datetime("2019-02-01"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [7.584891, 6.529796], "era5": [7.241081, 6.644804]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+
+def test_reanalysis_aggregate_daily(reanalysis_aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test default aggregate reanalysis values and date range, at daily time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project, reanalysis_products=["merra2", "era5"], time_resolution="D"
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-01-16"),
+        pd.to_datetime("2019-03-31"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [12.868168, 5.152958], "era5": [12.461761, 5.238968]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+    # ____________________________________________________________________
+    # Check for invalid user-defined end dates
+    # Date range doesn't include full 20 years
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="D",
+            end_date_lt="2019-01-14 23:00",
+        )
+
+    # End date out of bounds, daily
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="D",
+            end_date_lt="2019-04-15 13:00",
+        )
+
+    # ____________________________________________________________________
+    # Test aggregate reanalysis values and date range with user-defined end date, at daily time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="D",
+        end_date_lt="2019-02-10 12:00",
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-01-16"),
+        pd.to_datetime("2019-02-10"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [12.868168, 14.571084], "era5": [12.461761, 14.045798]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+
+def test_reanalysis_aggregate_hourly(reanalysis_aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test default aggregate reanalysis values and date range, at hourly time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project, reanalysis_products=["merra2", "era5"], time_resolution="h"
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-01-15 12:00"),
+        pd.to_datetime("2019-03-31 23:00"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [10.509840, 9.096710], "era5": [9.202639, 9.486806]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+    # ____________________________________________________________________
+    # Check for invalid user-defined end dates
+    # Date range doesn't include full 20 years
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="h",
+            end_date_lt="2019-01-15 10:00",
+        )
+
+    # End date out of bounds, hourly
+    with pytest.raises(ValueError):
+        MonteCarloAEP(
+            reanalysis_aep_project,
+            reanalysis_products=["merra2", "era5"],
+            time_resolution="h",
+            end_date_lt="2019-04-15 13:00",
+        )
+
+    # ____________________________________________________________________
+    # Test aggregate reanalysis values and date range with user-defined end date, at hourly time resolution
+    analysis = MonteCarloAEP(
+        reanalysis_aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="h",
+        end_date_lt="2019-02-10 12:00",
+    )
+    df_rean = analysis._reanalysis_aggregate
+
+    # check that date range is truncated correctly
+    assert (df_rean.index[0], df_rean.index[-1]) == (
+        pd.to_datetime("1999-01-15 12:00"),
+        pd.to_datetime("2019-02-10 12:00"),
+    )
+
+    # Check wind speed values at start and end dates
+    expected = {"merra2": [10.509840, 16.985526], "era5": [9.202639, 15.608469]}
+    computed = {
+        key: df_rean.loc[[df_rean.index[0], df_rean.index[-1]], key].to_numpy() for key in expected
+    }
+
+    for key in expected:
+        npt.assert_array_almost_equal(computed[key], expected[key])
+
+
+def test_monthly_lin(aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test linear regression model, at monthly time resolution
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="MS",
+        reg_model="lin",
+        reg_temperature=False,
+        reg_wind_direction=False,
+    )
+    # Run Monte Carlo AEP analysis, confirm the results are consistent
+    analysis.run(num_sim=10)
+    sim_results = analysis.results
+
+    # Make sure AEP results are consistent to six decimal places
+    expected_results = [11.284629, 10.801102, 1.130812, 4.287147, 0.061666, 5.365357]
+
+    calculated_results = [
+        sim_results.aep_GWh.mean(),
+        sim_results.aep_GWh.std() / sim_results.aep_GWh.mean() * 100,
+        sim_results.avail_pct.mean() * 100,
+        sim_results.avail_pct.std() / sim_results.avail_pct.mean() * 100,
+        sim_results.curt_pct.mean() * 100,
+        sim_results.curt_pct.std() / sim_results.curt_pct.mean() * 100,
+    ]
+
+    npt.assert_array_almost_equal(calculated_results, expected_results)
+
+
+# Test inputs to the regression model, at daily time resolution
+def test_daily_inputs(subtests, aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test inputs to the regression model, at monthly time resolution
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="D",
+        reg_temperature=True,
+        reg_wind_direction=True,
+    )
+    df = analysis.aggregate
+
+    # Check the pre-processing functions
+    with subtests.test("Revenue meter pre-processing"):
         # Energy Nan flags are all zero
         npt.assert_array_equal(df["energy_nan_perc"].values, np.repeat(0.0, df.shape[0]))
 
@@ -443,7 +364,7 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
         ]
         npt.assert_array_almost_equal(actual_gwh, expected_gwh)
 
-    def check_process_loss_estimates_daily(self, df):
+    with subtests.test("Availability and curtailment pre-processing"):
         # Availablity, curtailment nan fields both 0, NaN flag is all False
         npt.assert_array_equal(df["avail_nan_perc"].values, np.repeat(0.0, df.shape[0]))
         npt.assert_array_equal(df["curt_nan_perc"].values, np.repeat(0.0, df.shape[0]))
@@ -462,7 +383,7 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
         npt.assert_array_almost_equal(df.loc[date_ind, "availability_pct"], expected_avail_pct)
         npt.assert_array_almost_equal(df.loc[date_ind, "curtailment_pct"], expected_curt_pct)
 
-    def check_process_reanalysis_data_daily(self, df):
+    with subtests.test("Reanalysis pre-processing"):
         expected = {
             "merra2": np.array([11.02459231, 7.04306896, 8.41880152]),
             "era5": np.array([10.47942319, 7.71069617, 9.60864791]),
@@ -476,87 +397,130 @@ class TestLongTermMonteCarloAEP(unittest.TestCase):
         computed = {key: df.loc[date_ind, key].to_numpy() for key in expected}
 
         for key in expected:
-            with self.subTest(f"checking {key}"):
+            with subtests.test(f"checking {key}"):
                 npt.assert_array_almost_equal(computed[key], expected[key])
 
-    def check_simulation_results_lin_monthly(self, s):
-        # Make sure AEP results are consistent to six decimal places
-        expected_results = [11.284629, 10.801102, 1.130812, 4.287147, 0.061666, 5.365357]
 
-        calculated_results = [
-            s.aep_GWh.mean(),
-            s.aep_GWh.std() / s.aep_GWh.mean() * 100,
-            s.avail_pct.mean() * 100,
-            s.avail_pct.std() / s.avail_pct.mean() * 100,
-            s.curt_pct.mean() * 100,
-            s.curt_pct.std() / s.curt_pct.mean() * 100,
-        ]
+def test_daily_gam(aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test GAM regression model (can be used at daily time resolution only)
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="D",
+        reg_model="gam",
+        reg_temperature=True,
+        reg_wind_direction=True,
+    )
+    # Run Monte Carlo AEP analysis, confirm the results are consistent
+    analysis.run(num_sim=5)
+    sim_results = analysis.results
 
-        npt.assert_array_almost_equal(calculated_results, expected_results)
+    # Make sure AEP results are consistent to six decimal places
+    expected_results = [12.627031, 7.9379, 1.298632, 6.403933, 0.040224, 12.434362]
 
-    def check_simulation_results_gam_daily(self, s):
-        # Make sure AEP results are consistent to six decimal places
-        expected_results = [12.781636, 4.428628, 1.323524, 6.135826, 0.049333, 8.462634]
+    calculated_results = [
+        sim_results.aep_GWh.mean(),
+        sim_results.aep_GWh.std() / sim_results.aep_GWh.mean() * 100,
+        sim_results.avail_pct.mean() * 100,
+        sim_results.avail_pct.std() / sim_results.avail_pct.mean() * 100,
+        sim_results.curt_pct.mean() * 100,
+        sim_results.curt_pct.std() / sim_results.curt_pct.mean() * 100,
+    ]
 
-        calculated_results = [
-            s.aep_GWh.mean(),
-            s.aep_GWh.std() / s.aep_GWh.mean() * 100,
-            s.avail_pct.mean() * 100,
-            s.avail_pct.std() / s.avail_pct.mean() * 100,
-            s.curt_pct.mean() * 100,
-            s.curt_pct.std() / s.curt_pct.mean() * 100,
-        ]
-
-        npt.assert_array_almost_equal(calculated_results, expected_results)
-
-    def check_simulation_results_gbm_daily(self, s):
-        # Make sure AEP results are consistent to six decimal places
-        expected_results = [12.955753, 14.918292, 1.310864, 5.250295, 0.049952, 9.226035]
-
-        calculated_results = [
-            s.aep_GWh.mean(),
-            s.aep_GWh.std() / s.aep_GWh.mean() * 100,
-            s.avail_pct.mean() * 100,
-            s.avail_pct.std() / s.avail_pct.mean() * 100,
-            s.curt_pct.mean() * 100,
-            s.curt_pct.std() / s.curt_pct.mean() * 100,
-        ]
-
-        npt.assert_array_almost_equal(calculated_results, expected_results)
-
-    def check_simulation_results_etr_daily(self, s):
-        # Make sure AEP results are consistent to six decimal places
-        expected_results = [12.938535, 8.561778, 1.334704, 5.33619, 0.057874, 11.339982]
-
-        calculated_results = [
-            s.aep_GWh.mean(),
-            s.aep_GWh.std() / s.aep_GWh.mean() * 100,
-            s.avail_pct.mean() * 100,
-            s.avail_pct.std() / s.avail_pct.mean() * 100,
-            s.curt_pct.mean() * 100,
-            s.curt_pct.std() / s.curt_pct.mean() * 100,
-        ]
-
-        npt.assert_array_almost_equal(calculated_results, expected_results)
-
-    def check_simulation_results_gam_daily_outliers(self, s):
-        # Make sure AEP results are consistent to six decimal places
-        expected_results = [13.46498, 8.248985, 1.324029, 5.966637, 0.048054, 8.851849]
-
-        calculated_results = [
-            s.aep_GWh.mean(),
-            s.aep_GWh.std() / s.aep_GWh.mean() * 100,
-            s.avail_pct.mean() * 100,
-            s.avail_pct.std() / s.avail_pct.mean() * 100,
-            s.curt_pct.mean() * 100,
-            s.curt_pct.std() / s.curt_pct.mean() * 100,
-        ]
-
-        npt.assert_array_almost_equal(calculated_results, expected_results)
-
-    def tearDown(self):
-        pass
+    npt.assert_array_almost_equal(calculated_results, expected_results)
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.xfail(reason="Fails intermittently depending, mostly on MacOS.")
+def test_daily_gbm(aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test GBM regression model (can be used at daily time resolution only)
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["era5"],
+        time_resolution="D",
+        reg_model="gbm",
+        reg_temperature=True,
+        reg_wind_direction=False,
+    )
+    # Run Monte Carlo AEP analysis, confirm the results are consistent
+    analysis.run(num_sim=5)
+    sim_results = analysis.results
+
+    # Make sure AEP results are consistent to six decimal places
+    expected_results = [12.955753, 14.918292, 1.310864, 5.250295, 0.049952, 9.226035]
+
+    calculated_results = [
+        sim_results.aep_GWh.mean(),
+        sim_results.aep_GWh.std() / sim_results.aep_GWh.mean() * 100,
+        sim_results.avail_pct.mean() * 100,
+        sim_results.avail_pct.std() / sim_results.avail_pct.mean() * 100,
+        sim_results.curt_pct.mean() * 100,
+        sim_results.curt_pct.std() / sim_results.curt_pct.mean() * 100,
+    ]
+
+    npt.assert_array_almost_equal(calculated_results, expected_results)
+
+
+def test_daily_etr(aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test ETR regression model (can be used at daily time resolution only)
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2"],
+        time_resolution="D",
+        reg_model="etr",
+        reg_temperature=False,
+        reg_wind_direction=False,
+    )
+    # Run Monte Carlo AEP analysis, confirm the results are consistent
+    analysis.run(num_sim=5)
+    sim_results = analysis.results
+
+    # Make sure AEP results are consistent to six decimal places
+    expected_results = [12.938535, 8.561778, 1.334704, 5.33619, 0.057874, 11.339982]
+
+    calculated_results = [
+        sim_results.aep_GWh.mean(),
+        sim_results.aep_GWh.std() / sim_results.aep_GWh.mean() * 100,
+        sim_results.avail_pct.mean() * 100,
+        sim_results.avail_pct.std() / sim_results.avail_pct.mean() * 100,
+        sim_results.curt_pct.mean() * 100,
+        sim_results.curt_pct.std() / sim_results.curt_pct.mean() * 100,
+    ]
+
+    npt.assert_array_almost_equal(calculated_results, expected_results)
+
+
+def test_daily_gam_outliers(aep_project):
+    reset_prng()
+    # ____________________________________________________________________
+    # Test GAM regression model (can be used at daily time resolution only)
+    analysis = MonteCarloAEP(
+        aep_project,
+        reanalysis_products=["merra2", "era5"],
+        time_resolution="D",
+        outlier_detection=True,
+        reg_model="gam",
+        reg_temperature=True,
+        reg_wind_direction=True,
+    )
+    # Run Monte Carlo AEP analysis, confirm the results are consistent
+    analysis.run(num_sim=5)
+    sim_results = analysis.results
+
+    # Make sure AEP results are consistent to six decimal places
+    expected_results = [12.407638, 15.787861, 1.295542, 6.693327, 0.039864, 15.81297]
+    calculated_results = [
+        sim_results.aep_GWh.mean(),
+        sim_results.aep_GWh.std() / sim_results.aep_GWh.mean() * 100,
+        sim_results.avail_pct.mean() * 100,
+        sim_results.avail_pct.std() / sim_results.avail_pct.mean() * 100,
+        sim_results.curt_pct.mean() * 100,
+        sim_results.curt_pct.std() / sim_results.curt_pct.mean() * 100,
+    ]
+
+    npt.assert_array_almost_equal(calculated_results, expected_results)

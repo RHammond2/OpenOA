@@ -28,12 +28,9 @@ def create_X_y():
 
 @pytest.mark.parametrize(
     "algorithm,r2,rmse",
-    [("etr", 0.999852, 130.0), ("gbm", 0.999999, 60.0), ("gam", 0.983174, 1330.0)],
+    [("etr", 0.999852, 130.0), ("gbm", 0.999999, 60.0), ("gam", 0.98397, 1400.0)],
 )
 def test_algorithm_defaults(subtests, create_X_y, algorithm, r2, rmse):
-    """Test different algorithms hyperoptimization and fitting results.
-    Hyperparameter optimization is a randomized grid search, so pass criteria is not stringent.
-    """
     reset_prng()
 
     X, y = create_X_y
