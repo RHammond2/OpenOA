@@ -8,7 +8,7 @@ dynamic = ["version"]
 authors = [{name = "NREL PRUF OA Team", email = "openoa@nrel.gov"}]
 readme = {file = "README.md", content-type = "text/markdown"}
 description = "A package for collecting and assigning wind turbine metrics"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.11,<3.15"  # TODO: Check back in for 3.15 support in pyGAm
 license = {file = "LICENSE.txt"}
 dependencies = [
     "scikit-learn>=1.0",
@@ -134,7 +134,7 @@ cache_dir = ".cache"
 
 [tool.isort]
 # https://github.com/PyCQA/isort
-py_version = 310
+py_version = 311
 src_paths = ["isort", "test"]
 combine_as_imports = true
 multi_line_output = 3
@@ -164,7 +164,7 @@ known_third_party = [
 [tool.ruff]
 src = ["openoa", "test"]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 fix = true
 
 [tool.ruff.lint]
